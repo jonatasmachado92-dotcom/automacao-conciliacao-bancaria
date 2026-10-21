@@ -49,7 +49,7 @@ Se `py` não estiver disponível, use o executável Python instalado para criar 
 
 ## Como funciona a comparação
 
-O sistema procura uma correspondência disponível no relatório financeiro dentro das tolerâncias informadas. Entre as opções válidas, prioriza a menor diferença de valor e, em seguida, a menor diferença de data. Cada lançamento financeiro é usado no máximo uma vez.
+O sistema procura correspondências no relatório financeiro dentro das tolerâncias informadas e busca maximizar a quantidade de lançamentos conciliados. Para escolher entre opções, considera primeiro a menor diferença de valor e depois a menor diferença de data. Cada lançamento financeiro é usado no máximo uma vez.
 
 Débitos são tratados como saídas negativas e créditos como entradas positivas quando as colunas são separadas. Para que a comparação seja coerente, os arquivos devem seguir a mesma convenção de sinais. Linhas com data ou valor inválido são preservadas e sinalizadas para revisão.
 

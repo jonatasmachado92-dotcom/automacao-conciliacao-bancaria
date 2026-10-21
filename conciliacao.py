@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import hashlib
+from collections import deque
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import pandas as pd
+
+
+def assinatura_conteudo(conteudo: bytes) -> str:
+    return hashlib.sha256(conteudo).hexdigest()
 
 
 def categorizar_lancamentos(frame: pd.DataFrame, coluna_descricao: str = "Descricao") -> pd.Series:
@@ -113,14 +119,13 @@ def conciliar(
     tolerancia_dias: int = 3,
     tolerancia_valor: Decimal = Decimal("0.01"),
 ) -> pd.DataFrame:
-    available_book = set(financeiro.index)
-    matches: dict[int, int] = {}
     valid_book = {
         index
         for index, row in financeiro.iterrows()
         if not row["Problema"]
     }
 
+    candidatos_por_banco: dict[Any, list[tuple[Decimal, int, Any]]] = {}
     ordered_bank = sorted(
         banco.index,
         key=lambda index: (
@@ -136,18 +141,49 @@ def conciliar(
             continue
 
         candidates = []
-        for book_index in valid_book & available_book:
+        for book_index in valid_book:
             book_row = financeiro.loc[book_index]
             amount_difference = abs(bank_row["Valor"] - book_row["Valor"])
             day_difference = abs((bank_row["Data"] - book_row["Data"]).days)
-            limite_valor = max(tolerancia_valor, Decimal("5.00"))
-            if amount_difference <= limite_valor and day_difference <= tolerancia_dias:
+            if amount_difference <= tolerancia_valor and day_difference <= tolerancia_dias:
                 candidates.append((amount_difference, day_difference, book_index))
+        candidatos_por_banco[bank_index] = sorted(candidates)
 
-        if candidates:
-            _, _, book_index = min(candidates)
-            matches[bank_index] = book_index
-            available_book.remove(book_index)
+    matches: dict[Any, Any] = {}
+    banco_por_livro: dict[Any, Any] = {}
+    for banco_inicial in candidatos_por_banco:
+        fila = deque([banco_inicial])
+        bancos_visitados = {banco_inicial}
+        livros_visitados = set()
+        banco_anterior: dict[Any, Any] = {}
+        livro_anterior: dict[Any, Any] = {}
+        caminho_aumentante = None
+
+        while fila and caminho_aumentante is None:
+            banco_atual = fila.popleft()
+            for _, _, livro_index in candidatos_por_banco[banco_atual]:
+                if livro_index in livros_visitados:
+                    continue
+                livros_visitados.add(livro_index)
+                banco_correspondente = banco_por_livro.get(livro_index)
+                if banco_correspondente is None:
+                    caminho_aumentante = (banco_atual, livro_index)
+                    break
+                if banco_correspondente not in bancos_visitados:
+                    bancos_visitados.add(banco_correspondente)
+                    banco_anterior[banco_correspondente] = banco_atual
+                    livro_anterior[banco_correspondente] = livro_index
+                    fila.append(banco_correspondente)
+
+        if caminho_aumentante is not None:
+            banco_atual, livro_livre = caminho_aumentante
+            while True:
+                matches[banco_atual] = livro_livre
+                banco_por_livro[livro_livre] = banco_atual
+                if banco_atual == banco_inicial:
+                    break
+                livro_livre = livro_anterior[banco_atual]
+                banco_atual = banco_anterior[banco_atual]
 
     results = []
     matched_book = set(matches.values())
@@ -158,7 +194,7 @@ def conciliar(
             status = "Inválido"
         elif book_row is not None:
             amount_difference = abs(bank_row["Valor"] - book_row["Valor"])
-            if amount_difference > Decimal("0.00") and amount_difference <= Decimal("5.00"):
+            if amount_difference > Decimal("0.00"):
                 status = "Conciliado com diferença"
             else:
                 status = "Conciliado"
