@@ -4,6 +4,7 @@ from decimal import Decimal
 import pandas as pd
 
 from conciliacao import (
+    assinatura_conteudo,
     categorizar_lancamentos,
     conciliar,
     parse_valor,
@@ -16,6 +17,12 @@ from conciliacao import (
 class ConciliacaoTests(unittest.TestCase):
     def test_parse_valor_brasileiro(self):
         self.assertEqual(parse_valor("R$ 1.234,56"), Decimal("1234.56"))
+
+    def test_assinaturas_diferenciam_conteudos(self):
+        self.assertNotEqual(
+            assinatura_conteudo(b"arquivo antigo"),
+            assinatura_conteudo(b"arquivo novo"),
+        )
 
     def test_datas_iso_e_brasileira(self):
         source = pd.DataFrame({"data": ["2025-03-02", "02/03/2025"], "valor": [1, 2]})
@@ -49,6 +56,62 @@ class ConciliacaoTests(unittest.TestCase):
             "Apenas no financeiro": 1,
         })
         self.assertEqual(result.loc[result["Status"] == "Conciliado", "Linha financeiro"].tolist(), [2, 3])
+
+    def test_tolerancia_de_valor_zero_nao_aceita_diferenca(self):
+        banco = pd.DataFrame([
+            {"Linha": 2, "Data": pd.Timestamp("2026-01-10"), "Valor": Decimal("100.00"), "Descricao": "", "Problema": ""},
+        ])
+        financeiro = pd.DataFrame([
+            {"Linha": 2, "Data": pd.Timestamp("2026-01-10"), "Valor": Decimal("104.00"), "Descricao": "", "Problema": ""},
+        ])
+
+        result = conciliar(
+            banco,
+            financeiro,
+            tolerancia_dias=0,
+            tolerancia_valor=Decimal("0.00"),
+        )
+
+        self.assertEqual(result["Status"].tolist(), ["Apenas no banco", "Apenas no financeiro"])
+
+    def test_diferenca_maior_que_cinco_e_sinalizada(self):
+        banco = pd.DataFrame([
+            {"Linha": 2, "Data": pd.Timestamp("2026-01-10"), "Valor": Decimal("100.00"), "Descricao": "", "Problema": ""},
+        ])
+        financeiro = pd.DataFrame([
+            {"Linha": 2, "Data": pd.Timestamp("2026-01-10"), "Valor": Decimal("106.00"), "Descricao": "", "Problema": ""},
+        ])
+
+        result = conciliar(
+            banco,
+            financeiro,
+            tolerancia_dias=0,
+            tolerancia_valor=Decimal("10.00"),
+        )
+
+        self.assertEqual(result["Status"].tolist(), ["Conciliado com diferença"])
+
+    def test_pareamento_maximiza_lancamentos_conciliados(self):
+        banco = pd.DataFrame([
+            {"Linha": 2, "Data": pd.Timestamp("2026-01-10"), "Valor": Decimal("100.00"), "Descricao": "", "Problema": ""},
+            {"Linha": 3, "Data": pd.Timestamp("2026-01-10"), "Valor": Decimal("104.00"), "Descricao": "", "Problema": ""},
+        ])
+        financeiro = pd.DataFrame([
+            {"Linha": 2, "Data": pd.Timestamp("2026-01-10"), "Valor": Decimal("101.00"), "Descricao": "", "Problema": ""},
+            {"Linha": 3, "Data": pd.Timestamp("2026-01-10"), "Valor": Decimal("96.00"), "Descricao": "", "Problema": ""},
+        ])
+
+        result = conciliar(
+            banco,
+            financeiro,
+            tolerancia_dias=0,
+            tolerancia_valor=Decimal("5.00"),
+        )
+
+        self.assertEqual(result["Status"].tolist(), [
+            "Conciliado com diferença",
+            "Conciliado com diferença",
+        ])
 
     def test_lancamento_invalido_e_preservado(self):
         source = pd.DataFrame({"data": ["data ruim"], "valor": ["n/a"]})

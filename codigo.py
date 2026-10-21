@@ -4,7 +4,7 @@ from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 
-from conciliacao import conciliar, preparar_lancamentos
+from conciliacao import assinatura_conteudo, conciliar, preparar_lancamentos
 
 
 PASTA_PROJETO = Path(__file__).resolve().parent
@@ -410,14 +410,18 @@ with st.sidebar:
     origem = st.radio("Dados de entrada", ["Usar demonstração", "Enviar arquivos"])
 
 if origem == "Usar demonstração":
-    banco_raw = pd.read_csv(PASTA_ENTRADA / "extrato_bancario.csv")
-    financeiro_raw = pd.read_csv(PASTA_ENTRADA / "relatorio_financeiro.csv")
+    arquivo_banco = PASTA_ENTRADA / "extrato_bancario.csv"
+    arquivo_financeiro = PASTA_ENTRADA / "relatorio_financeiro.csv"
+    banco_raw = pd.read_csv(arquivo_banco)
+    financeiro_raw = pd.read_csv(arquivo_financeiro)
+    assinatura_arquivo_banco = assinatura_conteudo(arquivo_banco.read_bytes())
+    assinatura_arquivo_financeiro = assinatura_conteudo(arquivo_financeiro.read_bytes())
 else:
     arquivo_banco, arquivo_financeiro = st.columns(2)
     with arquivo_banco:
-        upload_banco = st.file_uploader("Extrato bancário", type=["csv", "xlsx", "xls"])
+        upload_banco = st.file_uploader("Extrato bancário", type=["csv", "xlsx"])
     with arquivo_financeiro:
-        upload_financeiro = st.file_uploader("Relatório financeiro", type=["csv", "xlsx", "xls"])
+        upload_financeiro = st.file_uploader("Relatório financeiro", type=["csv", "xlsx"])
     if not upload_banco or not upload_financeiro:
         st.info("Envie os dois arquivos para configurar a conciliação.")
         st.stop()
@@ -427,6 +431,8 @@ else:
     except (ValueError, ImportError) as erro:
         st.error(str(erro))
         st.stop()
+    assinatura_arquivo_banco = assinatura_conteudo(upload_banco.getvalue())
+    assinatura_arquivo_financeiro = assinatura_conteudo(upload_financeiro.getvalue())
 
 st.markdown("<div class='section-panel'>", unsafe_allow_html=True)
 esquerda, direita = st.columns(2)
@@ -463,6 +469,8 @@ if st.button("Conciliar", type="primary", disabled=banco is None or financeiro i
         float(tolerancia_valor_centavos),
         assinatura_banco,
         assinatura_financeiro,
+        assinatura_arquivo_banco,
+        assinatura_arquivo_financeiro,
     )
 
 resultado = st.session_state.get("resultado_conciliacao")
@@ -473,11 +481,15 @@ parametros_atuais = (
     float(tolerancia_valor_centavos),
     assinatura_banco,
     assinatura_financeiro,
+    assinatura_arquivo_banco,
+    assinatura_arquivo_financeiro,
 )
 if resultado is not None and parametros == parametros_atuais:
     totais = resultado["Status"].value_counts()
     contadores = {
-        "Conciliados": int(totais.get("Conciliado", 0)),
+        "Conciliados": int(
+            totais.get("Conciliado", 0) + totais.get("Conciliado com diferença", 0)
+        ),
         "Só no banco": int(totais.get("Apenas no banco", 0)),
         "Só no financeiro": int(totais.get("Apenas no financeiro", 0)),
         "Inválidos": int(totais.get("Inválido", 0)),
@@ -494,7 +506,14 @@ if resultado is not None and parametros == parametros_atuais:
     st.markdown("<div class='section-panel'>", unsafe_allow_html=True)
     status_filtro = st.selectbox(
         "Filtrar resultado",
-        ["Todos", "Conciliado", "Apenas no banco", "Apenas no financeiro", "Inválido"],
+        [
+            "Todos",
+            "Conciliado",
+            "Conciliado com diferença",
+            "Apenas no banco",
+            "Apenas no financeiro",
+            "Inválido",
+        ],
     )
     exibicao = resultado if status_filtro == "Todos" else resultado[resultado["Status"] == status_filtro]
     st.dataframe(exibicao, use_container_width=True, hide_index=True)
